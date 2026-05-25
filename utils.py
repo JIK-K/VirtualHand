@@ -7,21 +7,39 @@ def map_landmarks_to_bullet(landmarks):
         
     bullet_positions = []
     
+    # 1. 화면상 손 크기 계산 (손목~중지뿌리 거리)
+    p0 = landmarks[0]
+    p9 = landmarks[9]
+    dx = p0[0] - p9[0]
+    dy = p0[1] - p9[1]
+    hand_size = np.sqrt(dx*dx + dy*dy) + 1e-6
+    
+    # 사용자 피드백 반영: 앞뒤(깊이) 조절이 너무 어려우므로, 
+    # 손의 위치를 바구니가 있는 Y=0.5 라인에 완벽히 '고정'시킵니다. 
+    # 이제 카메라 앞뒤로 손을 뻗을 필요 없이 좌우/상하로만 움직이면 무조건 공 위에 손이 위치합니다!
+    TARGET_SIZE = 0.15 # 물리 엔진에서 유지할 고정 손 크기 기준
+    base_y = 0.5 # 바구니 중앙 깊이로 완벽 고정
+    
+    # 2. 손목(0번 관절)의 위치를 로봇 공간의 앵커(기준점)로 삼습니다.
+    # 민감도 폭풍 증가: 화면 중앙에서 조금만 손을 움직여도 양쪽 바구니(-0.4 ~ 0.4)에 쉽게 닿도록 2.5배 증폭
+    base_x = (1.0 - p0[0] - 0.5) * 2.5
+    # 상하 이동 민감도 증가 및 바구니 바닥에 손이 쉽게 닿도록 초기 높이(오프셋)를 낮춤
+    base_z = -0.05 + (1.0 - p0[1]) * 1.5
+    
+    # 3. 손 크기가 화면에서 커져도(카메라에 가까워져도) 물리 엔진 상의 손 크기는 고정되도록 스케일 보정
+    scale_factor = TARGET_SIZE / hand_size
+    
     for lm_x, lm_y, lm_z in landmarks:
-        # 1. 카메라 좌표계 반전 (캠은 거울 모드이므로 좌우 뒤집기)
-        x_ratio = 1.0 - lm_x
-        y_ratio = lm_y
+        # 손목 좌표 대비 화면 상의 상대적인 X, Y 변위
+        rel_x = (1.0 - lm_x) - (1.0 - p0[0])
+        rel_y = (1.0 - lm_y) - (1.0 - p0[1])
         
-        # 2. PyBullet 3D 공간 매핑
-        # 카메라 좌/우 -> 로봇 좌/우 (X축)
-        bullet_x = (x_ratio - 0.5) * 1.5    # 가동 범위를 조금 더 넓힘 (-0.75m ~ +0.75m)
+        # 보정된 변위를 손목 기준점에 더해서 최종 좌표 생성
+        bullet_x = base_x + (rel_x * 1.5 * scale_factor)
+        bullet_z = base_z + (rel_y * 1.2 * scale_factor)
         
-        # 카메라 상/하 -> 로봇 위/아래 (Z축)
-        bullet_z = 0.0 + (1.0 - y_ratio) * 1.2 # 위아래 가동 범위도 넓힘 (0.0m ~ 1.2m)
-        
-        # 손가락의 깊이(MediaPipe Z) -> 로봇 앞/뒤 (Y축)
-        # MediaPipe에서 Z가 작을수록 카메라와 가까움 -> 로봇의 Y축은 양수가 앞쪽이므로 역으로 매핑
-        bullet_y = 0.5 - (lm_z * 1.0) # 기본 0.5m 깊이에서 손가락 굴곡에 따라 앞뒤로 배치됨
+        # 깊이(Z)도 스케일 보정
+        bullet_y = base_y - (lm_z * 0.8 * scale_factor)
         
         bullet_positions.append([bullet_x, bullet_y, bullet_z])
         
